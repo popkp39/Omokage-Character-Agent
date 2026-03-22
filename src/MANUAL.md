@@ -1,0 +1,511 @@
+# Omokage-Character-Agent (OCA) マニュアル
+
+Claude Code の応答に連動して、VOICEVOX による音声合成と VMagicMirror の表情・動きの切り替えを行う連携ツールです。
+
+## 概要
+
+Claude Code が応答を返すたびに、以下が自動実行されます。
+
+1. **音声合成** — VOICEVOX で応答の要約文を読み上げ用の音声を生成する（表情ごとの声質オフセット対応）
+2. **表情変更** — VMagicMirror にホットキーを送信し、アバターの表情を切り替える
+3. **音声出力** — VB-Cable 経由で VMagicMirror のリップシンクに反映 + PC スピーカーでモニター再生
+
+本システムは **Windows 向け** です。Claude Code の `CLAUDE.md` ルールとローカルコマンド実行機能を利用するため、以下の環境で動作します。
+
+| 環境 | 対応 |
+| --- | --- |
+| Claude Code CLI（ターミナル） | ✅ |
+| VSCode 拡張の Claude Code | ✅ |
+| デスクトップ版 Claude の「コード」タブ | ✅ |
+| デスクトップ版 Claude の「チャット」タブ | ❌ |
+| Web 版 claude.ai | ❌ |
+
+## 必要なソフトウェア
+
+| ソフトウェア | 用途 | 入手先 |
+| --- | --- | --- |
+| Python 3.10+ | スクリプト実行環境（※※） | [公式サイト](https://www.python.org/) |
+| VMagicMirror v4.x | VRM アバター表示・表情制御 | [BOOTH](https://baku-dreameater.booth.pm/items/1272298) |
+| VOICEVOX | 音声合成エンジン（※） | [公式サイト](https://voicevox.hiroshiba.jp/) |
+| VB-CABLE | 仮想オーディオデバイス（リップシンク用） | [公式サイト](https://vb-audio.com/Cable/) |
+| Claude Code | AI コーディングアシスタント | [公式サイト](https://claude.com/claude-code) |
+
+> ※※ Python のインストール時に **「Add python.exe to PATH」にチェックを入れてください。** チェックを入れないとセットアップスクリプトが Python を検出できません。
+>
+> ※ VOICEVOX で生成された音声を動画・配信等で利用する場合は、キャラクターごとの利用規約に従ってください（クレジット表記「VOICEVOX:キャラ名」が必要な場合があります）。詳細は [VOICEVOX 公式サイト](https://voicevox.hiroshiba.jp/) をご確認ください。
+>
+> 本ツールに VRM モデルは同梱されていません。VMagicMirror で使用する VRM モデルは別途ご用意ください（例: [VRoid Studio](https://vroid.com/studio) 等のツールで自作する、[VRoid Hub](https://hub.vroid.com/) で配布モデルを探す、など）。
+>
+> 本マニュアルでは本ツール（Omokage-Character-Agent）を動かすために必要な最低限の設定手順を説明しています。各外部ソフトウェアの詳細な操作方法については、各公式サイトを参照してください。*外部ソフトウェアの導入や設定で分からないことがあれば、Claude に質問すると解決のヒントが得られるかもしれません。*
+
+## ファイル構成
+
+```
+Omokage-Character-Agent/                          # リポジトリルート（フォルダ名は任意）
+├── LICENSE                             # ライセンス（MIT）
+├── README.md                           # プロジェクト概要
+├── requirements.txt                    # Python 依存パッケージ
+├── setup.sh                            # セットアップスクリプト
+├── はじめに_初回セットアップ手順.md      # 初回セットアップガイド
+├── 初回セットアップ.bat                  # Windows 用セットアップ（ダブルクリック）
+├── 設定画面を開く.bat                    # Windows 用設定画面起動（ダブルクリック）
+├── src/
+│   ├── config.py                       # 設定 GUI（Tkinter 5タブ）+ CLI 設定出力
+│   ├── send_to_avatar.py               # 表情送信 + 音声合成・再生（本番処理）
+│   ├── hook_hotkey.py                  # Hook イベント時のホットキー送信
+│   ├── _launch_config.py              # 設定画面ランチャー（多重起動防止）
+│   ├── summary_system_prompt.md        # デフォルトの要約スタイル
+│   ├── MANUAL.md                       # 本ドキュメント
+│   ├── avatar_settings.json            # 設定ファイル（DPAPI 暗号化・自動生成）
+│   ├── avatar_log_1.jsonl              # 要約ログ スロット1（自動生成）
+│   ├── avatar_log_2.jsonl              # 要約ログ スロット2（自動生成）
+│   ├── avatar_log_3.jsonl              # 要約ログ スロット3（自動生成）
+│   ├── config_error.log                # エラーログ（自動生成）
+│   ├── .hook_pending                   # Hook デバウンス用保留データ（自動生成）
+│   ├── .avatar_sent                    # 本命送信タイムスタンプ（自動生成）
+│   └── AIPersonas/                     # スタイルエディタで作成したキャラ設定の保存先
+└── .venv/                              # Python 仮想環境
+```
+
+## セットアップ
+
+> **注意:** Claude Code の `CLAUDE.md` にはこのフォルダの**絶対パス**が記載されます。セットアップ後にフォルダを移動・リネームするとパスが合わなくなるため、**最終的な配置場所を決めてからセットアップを行ってください。**移動した場合は `~/.claude/CLAUDE.md` 内のパスを書き換えてください。
+
+### 方法 A: セットアップスクリプトを使う（推奨）
+
+**`初回セットアップ.bat`** をダブルクリックしてください。仮想環境の作成・依存パッケージのインストール・動作確認まで自動で行います。
+
+### 方法 B: 手動セットアップ（Git Bash 等を使う場合）
+
+```bash
+cd path/to/Omokage-Character-Agent  # フォルダへ移動
+python -m venv .venv
+source .venv/Scripts/activate
+pip install -r requirements.txt
+```
+
+### 外部ソフトウェアの準備
+
+#### VOICEVOX の起動
+
+VOICEVOX を起動し、HTTP サーバーが `http://127.0.0.1:50021` で待ち受けていることを確認します。
+
+> 補足: 設定で `localhost` を指定した場合、Windows の IPv6 DNS 解決による遅延を回避するため、自動的に `127.0.0.1` に置換されます。
+
+#### VB-CABLE のインストール
+
+VB-CABLE をインストールします（PC 再起動が必要な場合あり）。
+
+> 補足: VB-Cable がなくてもスピーカー再生やホットキー送信は正常に動作します（リップシンクのみスキップ）。
+
+#### VMagicMirror の設定
+
+1. VMagicMirror を起動し、VRM モデルを読み込む
+2. **リップシンク** タブで、マイク入力を **「CABLE Output」** に変更する（VB-CABLE 使用時）
+3. 同タブの **「カメラ非使用時、音声ベースでアバターを動かす」** にチェックを入れる
+4. **Hot Key** タブで以下のホットキーを登録する（デフォルトのマッピング）
+
+| ホットキー | 割り当て先 |
+| --- | --- |
+| Ctrl+Shift+1 | Word To Motion: 1（笑顔） |
+| Ctrl+Shift+2 | Word To Motion: 2（怒り） |
+| Ctrl+Shift+3 | Word To Motion: 3（悲しみ） |
+| Ctrl+Shift+4 | Word To Motion: 4（驚き） |
+| Ctrl+Shift+5 | Word To Motion: 5（真剣） |
+| Ctrl+Shift+6 | Word To Motion: 6（照れ） |
+| Ctrl+Shift+7 | Word To Motion: 7（困惑） |
+| Ctrl+Shift+8 | Word To Motion: 8（冷静） |
+| Ctrl+Shift+9 | Word To Motion: 9（喜び） |
+| Ctrl+Shift+0 | Word To Motion: 10（普通） |
+
+5. **「Hot Key を有効化」** チェックボックスをオンにする
+6. 各 Word To Motion アイテムにブレンドシェイプ（Joy, Angry, Sorrow 等）を設定する
+
+> 補足: ホットキーの割り当ては本ツールの設定 GUI のリアクションタブでカスタマイズできます。
+
+#### Claude Code の起動
+
+Claude Code を起動してください（VSCode 拡張、デスクトップ版の「コード」タブ、またはターミナルで `claude` コマンド）。
+
+### 本ツール（Omokage-Character-Agent）の設定
+
+#### 1. 設定 GUI の起動
+
+`設定画面を開く.bat` をダブルクリックしてください。
+
+コマンドラインから起動する場合（多重起動防止付き）:
+
+```bash
+source .venv/Scripts/activate && python src/_launch_config.py
+```
+
+> 補足: `python src/config.py` でも起動できますが、`_launch_config.py` 経由でないと多重起動防止やクラッシュ時のエラーログ記録が有効になりません。
+
+#### 2. 仮想ケーブルの設定（VB-CABLE 使用時）
+
+**ボイスタブ** の「仮想ケーブル」で **「CABLE Input」** を選択してください。
+これにより、VOICEVOX の音声が VB-CABLE 経由で VMagicMirror のリップシンクに反映されます。
+
+#### 3. 環境チェックの実行
+
+GUI 下部の「環境チェック」ボタンを押すと、以下を自動チェックします。
+
+- VOICEVOX 接続確認
+- 仮想ケーブル（VB-Cable等）検出
+- VMagicMirror 起動確認
+- CLAUDE.md ジェネレーター確認
+
+#### 4. CLAUDE.md ルールの生成
+
+GUI の「CLAUDE.md ジェネレーター」タブで「生成」→「コピー」し、`~/.claude/CLAUDE.md` に追記してください。これにより Claude Code が毎ターン自動で `send_to_avatar.py` を実行するようになります。
+
+### 動作確認
+
+セットアップが完了したら、Claude Code で何か話しかけてみてください。以下がすべて動けばセットアップ完了です。
+
+- [ ] アバターの表情が変わる（ホットキー送信）
+- [ ] VOICEVOX で要約文が読み上げられる（音声合成）
+- [ ] アバターが口パクする（VB-Cable 経由のリップシンク）
+
+うまくいかない場合は「トラブルシューティング」タブを参照してください。
+
+## 設定 GUI の詳細
+
+### ボイスタブ
+
+| 項目 | 説明 |
+| --- | --- |
+| 再生デバイス | PC 既定 / スピーカー指定 / 仮想ケーブルのみ から選択 |
+| 仮想ケーブル | VB-Cable デバイスの選択（仮想デバイスのみ表示） |
+| エンジン URL | VOICEVOX の HTTP エンドポイント |
+| 使用ボイス | VOICEVOX スピーカーの選択（検索・自動試聴対応） |
+| VOICEVOX 基本声質 | 速度・ピッチ・抑揚・音量のスライダー（試聴可能） |
+| デバイス一覧を更新 | USB デバイスの抜き差し後に押すとデバイスリストを再取得 |
+
+自動試聴スイッチ: ボイスを切り替えたときにサンプル音声を自動再生します。
+
+### スタイルタブ
+
+キャラクタープロンプトを指定して、Claude Code が生成する要約文の口調を変更できます。
+
+| 項目 | 説明 |
+| --- | --- |
+| キャラプロンプト | `.txt` / `.md` ファイルを指定。有効にするとそのキャラの口調で要約が生成される |
+| 編集 | 指定中のファイルを内蔵エディタで編集 |
+| 新規作成 | トーンテンプレート（やわらかめ / ふつう / かため / 白紙）から選んで新規作成 |
+| 完成品サンプル | ツンデレ美少女 / 元気な相棒 / 知的な執事 / ゆるふわ癒し系 / クール研究者 / おかん の6種 |
+| 最大文字数 | 要約文の文字数上限（CLAUDE.md に反映） |
+| 履歴ログ | 要約ログの記録の有効化（スロット式・3 スロット） |
+| ログスロット | 記録先スロット（1〜3）の切り替え・スロット名の編集 |
+| ログ注入プロンプト | 手動注入 / Hook 追加 / Hook 削除の指示プロンプトをコピー |
+
+作成したスタイルファイルは `AIPersonas/` フォルダに保存されます。
+
+### リアクションタブ
+
+表情（エモート）ごとのホットキーと声質オフセットを設定します。
+
+| 項目 | 説明 |
+| --- | --- |
+| 一覧 | 10 種類のエモートとホットキーの対応表。個別に「送信」テストが可能 |
+| 順番にテスト | 全エモートを 1.5 秒間隔で順に送信（GUI はフリーズしません） |
+| 詳細設定 | 選択したエモートのホットキー変更 + 声質オフセット（速度 / ピッチ / 抑揚 / 音量） |
+| プリセット | ホットキー + 声質オフセットのセットを JSON でエクスポート / インポート |
+
+### Hook連携タブ
+
+Claude Code の Hook イベント発生時に、対応するエモートのホットキーを自動送信します。
+
+| 項目 | 説明 |
+| --- | --- |
+| Hook 有効化 | Hook 発生時のホットキー送信を有効にする |
+| 待ち時間 | デバウンス間隔（ミリ秒、デフォルト 1500）。連続発火時は最後のイベントだけ送信される。0 で即時送信 |
+| イベントマッピング | 20 種類の Hook イベントごとにエモートを割り当て（0 = 送信しない） |
+| テスト | 各イベントのホットキーを個別にテスト送信 |
+| 追加プロンプトをコピー | Claude Code に貼り付けて Hook を `~/.claude/settings.json` に一括登録する |
+| 削除プロンプトをコピー | Claude Code に貼り付けて Hook を安全に削除する（他の Hook は残る） |
+| 設定 JSON を表示 | 生成される Hook 設定の JSON を確認・コピーする |
+
+**Hook の登録方法:**
+
+全 20 イベントを `~/.claude/settings.json` に一括登録し、フィルタリングは GUI のイベントマッピング（0 = 送信しない）で制御します。全イベント登録済みなので、マッピング変更時に settings.json を再編集する必要はありません。
+
+1. 「追加プロンプトをコピー」ボタンを押す
+2. Claude Code にプロンプトを貼り付ける
+3. Claude Code が既存の Hook を壊さずにマージしてくれる
+
+**Hook の削除方法:**
+
+1. 「削除プロンプトをコピー」ボタンを押す
+2. Claude Code にプロンプトを貼り付ける
+3. `hook_hotkey.py` を含むエントリだけが削除され、他の Hook（ntfy 等）は残る
+
+手動で削除する場合は `~/.claude/settings.json` をテキストエディタで開き、`hook_hotkey.py` を含むエントリを削除してください。
+
+> ※ 全ての Hook は `async: true`（非同期実行）で登録されるため、Claude Code の応答速度に影響しません。
+
+対応する Hook イベント一覧:
+
+| イベント | 説明 | デフォルトエモート |
+| --- | --- | --- |
+| SessionStart | セッション開始 / 再開 | 笑顔 |
+| Stop | 応答完了 | 笑顔 |
+| PostToolUseFailure | ツール失敗 / エラー発生 | 悲しみ |
+| PermissionRequest | 権限ダイアログ表示時 | 困惑 |
+| Notification | 通知 / 確認が必要なとき | 困惑 |
+| SubagentStop | サブエージェント停止 | 冷静 |
+| TaskCompleted | タスク完了 | 喜び |
+| SessionEnd | セッション終了 | 普通 |
+
+その他のイベント（PreToolUse, PostToolUse, SubagentStart 等）はデフォルトでは送信しない設定です。
+
+### 高度な Hook 設定 — デフォルト無効イベントの活用
+
+デフォルトで「0: 送信しない」に設定されているイベントも、GUI のイベントマッピングからエモートを割り当てるだけで有効化できます。settings.json には全イベントが登録済みなので、再登録は不要です。
+
+**全イベント一覧と活用例:**
+
+| イベント | 説明 | 発火頻度 | 活用例 |
+| --- | --- | --- | --- |
+| InstructionsLoaded | CLAUDE.md 読み込み完了 | 低 | セッション準備完了の通知に |
+| UserPromptSubmit | ユーザーがプロンプトを送信した直後 | 中 | 「了解！」的なリアクションに |
+| PreToolUse | ツール実行前（ファイル読み書き等） | **非常に高** | 作業中の表情維持に（注意：高頻度） |
+| PostToolUse | ツール実行成功後 | **非常に高** | 作業順調の表現に（注意：高頻度） |
+| SubagentStart | サブエージェント開始 | 低 | 並列作業開始の表現に |
+| TeammateIdle | チームメンバーがアイドル状態 | 低 | マルチエージェント構成で待機中の表現に |
+| ConfigChange | Claude Code の設定ファイル変更 | 低 | 設定変更の気づきに |
+| WorktreeCreate | Git Worktree 作成 | 低 | ブランチ作業開始の表現に |
+| WorktreeRemove | Git Worktree 削除 | 低 | ブランチ作業完了の表現に |
+| PreCompact | コンテキスト圧縮前 | 低 | 「ちょっと整理するね」的な表現に |
+| Elicitation | MCP サーバーからの入力要求 | 低 | 外部ツール連携時のリアクションに |
+| ElicitationResult | MCP 入力結果受信 | 低 | 外部ツール応答のリアクションに |
+
+**待ち時間（デバウンス）の仕組み:**
+
+短時間にイベントが連続発火した場合、すべてのホットキーを送信すると VMagicMirror の表情がちらつきます。「待ち時間」設定（デフォルト 1500 ミリ秒）はこれを防ぐためのデバウンス機能です。
+
+- イベント発生 → 待ち時間だけ待機 → 待機中に新しいイベントが来たら古い方を破棄
+- 結果、連続発火しても**最後の 1 つだけ**が VMagicMirror に送信される
+- 0 に設定すると即時送信（デバウンスなし）
+
+高頻度イベント（PreToolUse / PostToolUse）を有効にする場合は、待ち時間を長め（2000〜3000 ミリ秒）に設定すると安定します。
+
+**高頻度イベントの注意点:**
+
+PreToolUse と PostToolUse は 1 ターンで数十回発火することがあります。
+待ち時間の設定である程度緩和されますが、有効にすると以下のような影響が出る可能性があります:
+
+- VMagicMirror への大量のホットキー送信で表情がちらつく
+- 他のアプリケーションがアクティブな場合、ホットキーが干渉する
+- 軽微ですが CPU・メモリ負荷が増加する
+
+**推奨設定パターン:**
+
+- **最小構成（デフォルト）**: SessionStart / Stop / エラー系のみ — 控えめだが安定
+- **標準構成**: デフォルト + UserPromptSubmit + SubagentStart — 会話感が増す
+- **フル構成**: ほぼ全イベント有効 — アバターが常にリアクション（高頻度イベントは要テスト）
+
+**設定手順:**
+
+1. Hook連携タブでイベントマッピングのドロップダウンを変更
+2. 「テスト」ボタンで動作確認
+3. 「保存」で反映（settings.json の再編集は不要）
+
+### CLAUDE.md ジェネレータータブ
+
+Claude Code が毎ターン自動でアバター通知を実行するためのルールテキストを生成します。
+
+1. 「生成」ボタンを押す
+2. 「コピー」ボタンでクリップボードにコピー
+3. `~/.claude/CLAUDE.md` に追記する
+
+最大文字数の設定がスタイルタブと連動しています。
+
+### マスタースイッチ
+
+GUI 上部の「アバター通知を有効にする」チェックボックスで、全機能（エモート・音声・要約）を一括で無効化できます。
+
+### その他の機能
+
+| 機能 | 説明 |
+| --- | --- |
+| 履歴ログビューワー | GUI 下部の「履歴ログ」ボタンで過去の要約文・エモートを一覧表示（スロット切替・最新 500 件） |
+| ログエクスポート | ビューワー内のボタンで選択中スロットのログを `.jsonl` ファイルとしてエクスポート |
+| ログクリア | ビューワー内のボタンで選択中スロットの履歴を全削除（確認ダイアログあり） |
+| 容量警告 | ログファイルが 5 MB に近づくとビューワー上部に警告を表示 |
+| 環境チェック | VOICEVOX / VB-Cable / VMagicMirror / CLAUDE.md を一括チェック |
+
+## 使い方
+
+### コマンドライン実行
+
+```bash
+source .venv/Scripts/activate && python src/send_to_avatar.py "要約テキスト" 表情ID
+```
+
+例:
+
+```bash
+source .venv/Scripts/activate && python src/send_to_avatar.py "設定ファイルを修正した" 1
+```
+
+### Claude Code との連携
+
+`~/.claude/CLAUDE.md` に定義されたルールにより、Claude Code は毎ターンの応答後に自動で以下を実行します。
+
+#### 処理の流れ
+
+1. Claude Code がターンの作業を完了する
+2. `config.py --print-summary-settings-json` を実行して設定を確認する
+3. `avatar_enabled` が `false` なら以降をスキップ
+4. `summary_generation_enabled` が `true` ならキャラプロンプトを Read ツールで読み、口調に反映する
+5. 作業内容を最大文字数以内の日本語 1 文に要約する
+6. 内容に合った表情 ID を選ぶ
+7. `send_to_avatar.py "要約文" 表情ID` を実行する
+
+### 設定の CLI 出力
+
+```bash
+python src/config.py --print-summary-settings-json
+```
+
+Claude Code が毎ターン呼び出すコマンドです。以下の JSON を出力します。
+
+```json
+{
+  "avatar_dir": "/path/to/Omokage-Character-Agent",
+  "avatar_enabled": true,
+  "summary_generation_enabled": true,
+  "summary_system_prompt_path": "/path/to/style.md",
+  "summary_max_chars": 50
+}
+```
+
+### 表情 ID 一覧
+
+| ID | 表情 | 使いどころ |
+| --- | --- | --- |
+| 1 | 笑顔 | 成功・完了・褒め |
+| 2 | 怒り | エラー・失敗・強い警告 |
+| 3 | 悲しみ | 謝罪・問題発生・残念な結果 |
+| 4 | 驚き | 予想外の発見・重大な気づき |
+| 5 | 真剣 | 重要な作業中・注意が必要 |
+| 6 | 照れ | 照れくさい内容・個人的な話題 |
+| 7 | 困惑 | 曖昧な指示・情報不足 |
+| 8 | 冷静 | 淡々とした情報提供・説明 |
+| 9 | 喜び | ユーザーの目標達成・大きな進捗 |
+| 10 | 普通 | その他 |
+
+## 動作の仕組み
+
+### 表情制御
+
+- `send_to_avatar.py` が Win32 API `keybd_event` でホットキー（デフォルト: Ctrl+Shift+数字キー）を送信
+- VMagicMirror がホットキーを受信し、対応する Word To Motion アイテムを発火
+- アバターのブレンドシェイプ（表情）が変化
+
+### 音声合成・再生
+
+- VOICEVOX の HTTP API（`/audio_query` → `/synthesis`）で WAV データを取得
+- 表情ごとの声質オフセット（速度 / ピッチ / 抑揚 / 音量）を基本声質に加算して適用
+- VB-Cable（仮想オーディオデバイス）に出力 → VMagicMirror のリップシンクに反映
+- モニター再生が有効な場合、PC スピーカーにも同時出力（マルチスレッド並列再生）
+
+### Hook イベント連携
+
+- `~/.claude/settings.json` の `hooks` に全 20 イベントが `async: true` で登録される
+- Claude Code の Hook が発火すると `hook_hotkey.py` が呼ばれる
+- `hook_hotkey.py` は設定の `hook_expression_mapping` を参照し、表情 ID が 0 なら即終了する
+- 表情 ID が 1 以上の場合、デバウンスファイル（`.hook_pending`）に書き込み待ち時間だけ待機する。待機後も自分が最新なら送信し、後続イベントに上書きされていた場合は破棄される
+- `async: true` のため Claude Code の応答速度に影響しない
+
+### 設定の暗号化
+
+- `avatar_settings.json` は Windows DPAPI で暗号化されています
+- 同一ユーザーアカウントでのみ復号可能です
+- 非 Windows 環境では平文 JSON で保存されます
+- 設定のリセットは `avatar_settings.json` を削除して `config.py` を再起動してください
+
+### バックグラウンドインポート
+
+`config.py` の GUI 起動時、numpy / sounddevice / requests をバックグラウンドスレッドで並列インポートし、デバイス一覧もプリフェッチします。これにより GUI の表示が高速化されています。
+
+### データアクセスの範囲
+
+本システムのスクリプトがアクセスするファイルは、すべてプロジェクトフォルダ内（`src/` 配下）に限定されています。`~/.claude/settings.json` などユーザー環境の設定ファイルを自動的に読み書きすることはありません。
+
+| スクリプト | アクセス先 | 用途 |
+| --- | --- | --- |
+| config.py | `src/avatar_settings.json` | 設定の保存・読み込み |
+| config.py | `src/MANUAL.md` | ヘルプ表示 |
+| config.py | `src/AIPersonas/*.md` | キャラクター設定の読み書き |
+| config.py | `src/summary_system_prompt.md` | デフォルト要約スタイル |
+| config.py | `src/avatar_log_{1-3}.jsonl` | ログの表示・管理 |
+| send_to_avatar.py | `src/avatar_log_{1-3}.jsonl` | ログの記録 |
+| send_to_avatar.py | `src/.avatar_sent` | 本命送信タイムスタンプ（Hook 抑制用） |
+| hook_hotkey.py | `src/.hook_pending` | デバウンス用一時ファイル |
+| hook_hotkey.py | `src/.avatar_sent` | 本命送信の確認（読み取りのみ） |
+| _launch_config.py | `src/config_error.log` | エラーログ |
+
+マニュアルや GUI 内で `~/.claude/settings.json` や `~/.claude/CLAUDE.md` に言及している箇所がありますが、これらはユーザーが手動で編集するための案内であり、スクリプトが自動的にアクセスするものではありません。
+
+また、以下の機能ではプロジェクトフォルダの**絶対パスを出力**します（外部ファイルの読み書きではありません）。
+
+| 機能 | 出力内容 |
+| --- | --- |
+| `--print-summary-settings-json` | `avatar_dir` にプロジェクトパスを含む JSON を標準出力 |
+| CLAUDE.md ジェネレーター | プロジェクトパスを含むスニペットを生成・クリップボードにコピー |
+| Hook 登録プロンプト | `hook_hotkey.py` の絶対パスを含む JSON を生成・クリップボードにコピー |
+| ログ注入プロンプト | ログファイルの絶対パスを含むプロンプトをクリップボードにコピー |
+
+## トラブルシューティング
+
+### 表情が変わらない
+
+- VMagicMirror Settings → Hot Key タブで「Hot Key を有効化」がオンか確認
+- ホットキーの割り当てが設定 GUI のリアクションタブの表示と一致しているか確認
+  - 特に `I`（アイ）と `l`（エル）、`O`（オー）と `0`（ゼロ）など紛らわしい文字に注意
+- リアクションタブの「送信」ボタンで個別テスト送信を試す
+- 手動でホットキー（例: Ctrl+Shift+1）を押して表情が変わるか確認
+- OS やアプリのショートカットと競合していないか確認（例: `Ctrl+Alt+I` は Windows 拡大鏡の色反転に予約されている）
+
+### 音声が出ない
+
+- VOICEVOX が起動しているか確認（ボイスタブで接続状態が表示されます）
+- VB-Cable デバイスが正しく選択されているか確認
+- モニター再生をオンにして PC スピーカーからの出力を確認
+- ボイスタブの「この声質で試聴」ボタンでテスト再生を試す
+
+### リップシンクが動かない
+
+- VMagicMirror Settings → リップシンクタブでマイク入力に「CABLE Output」が設定されているか確認
+- 同タブの「カメラ非使用時、音声ベースでアバターを動かす」にチェックが入っているか確認
+- 本ツール（Omokage-Character-Agent）の設定 GUI → ボイスタブで仮想ケーブルに「CABLE Input」が選択されているか確認
+- 仮想ケーブルが未設定または未接続の場合、リップシンク送信はスキップされ、スピーカー再生のみ行われます
+
+### デバイスが表示されない / 古い情報が残る
+
+- ボイスタブの「デバイス一覧を更新」ボタンを押してデバイスリストを再取得してください
+- USB デバイスの抜き差し後は再取得が必要です
+
+### config.py が起動しない
+
+- `.venv` が存在するか確認（`初回セットアップ.bat` で自動作成、または `python -m venv .venv` で手動作成）
+- `pip install -r requirements.txt` で依存パッケージをインストール
+
+### VOICEVOX 接続エラー
+
+- VOICEVOX が起動していない場合でも、ホットキー送信と履歴ログ記録は実行されます（音声のみスキップ）
+- ベース URL がデフォルトから変更されている場合、ボイスタブで正しい URL を確認してください
+
+### Hook が動作しない
+
+- Hook連携タブで「Hook 発生時にホットキーを送信する」がオンか確認
+- `~/.claude/settings.json` の `hooks` に `hook_hotkey.py` のエントリが登録されているか確認
+- 未登録の場合は「追加プロンプトをコピー」→ Claude Code に貼り付けて登録
+- イベントマッピングが「0: 送信しない」になっていないか確認
+- エラーは stderr に出力されます（`hook_hotkey: イベント名 のホットキー送信に失敗: ...`）
+
+### フォルダを移動・リネームした後にアバターが動かなくなった
+
+`~/.claude/CLAUDE.md` にこのフォルダの絶対パスが記載されています。フォルダの移動やリネームを行った場合は、`CLAUDE.md` 内のパスを新しい場所に書き換えてください。

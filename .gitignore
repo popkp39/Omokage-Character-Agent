@@ -1,0 +1,31 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# 個人設定（暗号化済み）
+src/avatar_settings.json
+
+# ログ・開発メモ・一時ファイル
+src/avatar_log*.jsonl
+src/config_error.log
+src/OCA_CHANGELOG.md
+src/.hook_pending
+src/.hook_last_send
+src/.avatar_sent
+src/*.lock
+
+# ユーザー作成ファイル
+src/AIPersonas/
+
+# Claude Code ローカル設定（CVE-2025-59536 対策）
+.claude/
+CLAUDE.md
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+Thumbs.db
+.DS_Store
