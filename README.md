@@ -49,3 +49,8 @@
 - **[VB-Cable](https://vb-audio.com/Cable/)** — 仮想オーディオデバイスとしてリップシンク連動に利用しています
 - **[Claude Code](https://claude.com/claude-code)** — Anthropic 社の AI コーディングアシスタントです
 - **[Python](https://www.python.org/)** — スクリプトの実行環境として利用しています
+
+## お問い合わせ
+
+- バグ報告・要望は [Issues](https://github.com/popkp39/Omokage-Character-Agent/issues) からお願いします
+- X (旧 Twitter): [@popkp39](https://x.com/popkp39)
