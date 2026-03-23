@@ -1,5 +1,7 @@
 # Omokage-Character-Agent (OCA)
 
+![Demo](src/Demo.png)
+
 [VMagicMirror](https://baku-dreameater.booth.pm/items/1272298) で表示した VRM アバターと、[VOICEVOX](https://voicevox.hiroshiba.jp/) の音声合成を Claude Code の応答に連動させる Windows 向け連携ツールです。
 
 ## できること
