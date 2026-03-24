@@ -34,7 +34,7 @@ Claude Code が応答を返すたびに、以下が自動実行されます。
 >
 > ※ VOICEVOX で生成された音声を動画・配信等で利用する場合は、キャラクターごとの利用規約に従ってください（クレジット表記「VOICEVOX:キャラ名」が必要な場合があります）。詳細は [VOICEVOX 公式サイト](https://voicevox.hiroshiba.jp/) をご確認ください。
 >
-> 本ツールに VRM モデルは同梱されていません。VMagicMirror で使用する VRM モデルは別途ご用意ください（例: [VRoid Studio](https://vroid.com/studio) 等のツールで自作する、[VRoid Hub](https://hub.vroid.com/) で配布モデルを探す、など）。
+> 本ツールに VRM モデルは同梱されていません。VMagicMirror で使用する VRM モデルは別途ご用意ください（例: [VRoid Studio](https://vroid.com/studio) 等のツールで自作する、[VRoid Hub](https://hub.vroid.com/) や [BOOTH](https://booth.pm/) で配布モデルを探す、など）。
 >
 > 本マニュアルでは本ツール（Omokage-Character-Agent）を動かすために必要な最低限の設定手順を説明しています。各外部ソフトウェアの詳細な操作方法については、各公式サイトを参照してください。*外部ソフトウェアの導入や設定で分からないことがあれば、Claude に質問すると解決のヒントが得られるかもしれません。*
 
