@@ -458,8 +458,16 @@ def _append_log_locked(
 
     lock_fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR)
     try:
-        # 最大2秒待ってロック取得（LK_LOCK はブロッキング）
-        msvcrt.locking(lock_fd, msvcrt.LK_LOCK, 1)
+        # ノンブロッキングで最大2秒リトライしてロック取得
+        _lock_deadline = time.monotonic() + 2.0
+        while True:
+            try:
+                msvcrt.locking(lock_fd, msvcrt.LK_NBLCK, 1)
+                break
+            except OSError:
+                if time.monotonic() >= _lock_deadline:
+                    raise
+                time.sleep(0.05)
         try:
             # 直前エントリと同一内容なら重複として弾く
             if log_path.exists():

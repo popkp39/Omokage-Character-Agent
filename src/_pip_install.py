@@ -1,6 +1,7 @@
 """requirements.txt のパッケージを1つずつインストールし、全体の進捗バーを表示する。"""
 
 import pathlib
+import re
 import subprocess
 import sys
 
@@ -29,16 +30,13 @@ def _find_needed(pkgs: list[str]) -> list[str]:
             # "Would install pkg1-1.0 pkg2-2.0" → ["pkg1", "pkg2"]
             for token in line.split()[2:]:
                 # "numpy-1.26.4" → "numpy"
-                # ハイフン区切りで最後のバージョン部分を除去
-                parts = token.split("-")
-                # バージョンは数字で始まる最初のパートから後ろ
-                name_parts = []
-                for p in parts:
-                    if p and p[0].isdigit():
-                        break
-                    name_parts.append(p)
-                if name_parts:
-                    needed_names.add("-".join(name_parts).lower())
+                # "nvidia-cuda-runtime-cu12-12.1.105" → "nvidia-cuda-runtime-cu12"
+                # 末尾から "-バージョン番号" 部分を除去する
+                m = re.match(r"^(.+?)-\d+[\d.]*(?:\.(?:post|dev|a|b|rc)\d*)*$", token)
+                if m:
+                    needed_names.add(m.group(1).lower())
+                else:
+                    needed_names.add(token.lower())
 
     # requirements.txt のパッケージ名と照合
     needed: list[str] = []
@@ -74,10 +72,13 @@ def main() -> int:
         return 0
 
     already = len(pkgs) - len(need_install)
+    # パッケージ名のみ抽出して表示（バージョン指定を除去）
+    names = [re.split(r"[>=<!\[]", pkg)[0] for pkg in need_install]
     if already > 0:
         print(f"  {len(need_install)}件のパッケージをインストールします ({already}件は導入済み)")
     else:
         print(f"  {len(need_install)}件のパッケージをインストールします")
+    print(f"  対象: {', '.join(names)}")
 
     total = len(need_install)
     failed: list[str] = []

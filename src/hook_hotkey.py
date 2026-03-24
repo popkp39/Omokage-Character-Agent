@@ -23,7 +23,9 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -35,10 +37,23 @@ _PENDING_FILE = Path(__file__).with_name(".hook_pending")
 
 
 def _write_pending(expression_id: int, timestamp: str) -> None:
-    """送信候補をファイルに書き込む。後続イベントが来れば上書きされる。"""
+    """送信候補をアトミックに書き込む。後続イベントが来れば上書きされる。
+
+    tempfile + os.replace を使い、同時発火による部分書き込みを防止する。
+    """
     try:
         data = json.dumps({"expression_id": expression_id, "ts": timestamp})
-        _PENDING_FILE.write_text(data, encoding="utf-8")
+        fd, tmp_path = tempfile.mkstemp(
+            dir=str(_PENDING_FILE.parent), suffix=".tmp"
+        )
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(data)
+            os.replace(tmp_path, str(_PENDING_FILE))
+        except BaseException:
+            with __import__("contextlib").suppress(OSError):
+                os.unlink(tmp_path)
+            raise
     except OSError:
         pass
 
