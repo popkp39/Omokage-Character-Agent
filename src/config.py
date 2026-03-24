@@ -69,6 +69,8 @@ threading.Thread(target=_background_import, daemon=True).start()
 
 IS_WINDOWS = platform.system() == "Windows"
 
+APP_VERSION = "0.1.1"
+
 AVATAR_ENABLED = True
 VOICEVOX_SPEAKER_ID = 1
 VOICEVOX_BASE_URL = "http://127.0.0.1:50021"
@@ -112,6 +114,12 @@ def get_active_log_path(settings: dict[str, object] | None = None) -> Path:
 SETTINGS_FILE = Path(__file__).with_name("avatar_settings.json")
 SETTINGS_FILE_FORMAT = "windows-dpapi"
 SETTINGS_FILE_VERSION = 1
+PRESET_DIR = Path(__file__).with_name("CharacterPresets")
+PRESET_VERSION = 1
+VMM_AUTOMATION_HOST = "127.0.0.1"
+VMM_AUTOMATION_PORT = 56131
+VMM_SLOT_MIN = 0
+VMM_SLOT_MAX = 15
 DEFAULT_DEVICE_LABEL = "既定の出力デバイスを使う"
 SPEAKER_SAMPLE_TEXT = "こんにちは。VOICEVOXのサンプル再生です。"
 DEVICE_SELECTOR_PATTERN = re.compile(r"^\[(\d+)\]\s")
@@ -408,6 +416,8 @@ def default_settings() -> dict[str, object]:
         "hook_hotkey_enabled": HOOK_HOTKEY_ENABLED,
         "hook_cooldown_ms": HOOK_COOLDOWN_MS,
         "hook_expression_mapping": build_default_hook_expression_mapping(),
+        "vmm_automation_port": VMM_AUTOMATION_PORT,
+        "last_loaded_preset": "",
     }
 
 
@@ -761,6 +771,9 @@ def normalize_device_selection(value: object, *, allow_default: bool = False) ->
     if allow_default and raw_value == DEFAULT_DEVICE_LABEL:
         return ""
 
+    if not raw_value:
+        return raw_value
+
     if raw_value.startswith("["):
         return raw_value
 
@@ -844,6 +857,59 @@ def save_settings(settings: dict[str, object]) -> None:
     os.replace(str(tmp_path), str(SETTINGS_FILE))
 
 
+def list_preset_files() -> list[Path]:
+    """CharacterPresets ディレクトリ内の .json ファイルを名前順で返す。"""
+    PRESET_DIR.mkdir(parents=True, exist_ok=True)
+    return sorted(PRESET_DIR.glob("*.json"), key=lambda p: p.stem)
+
+
+def load_preset(path: Path) -> dict[str, object]:
+    """プリセットJSONを読み込む。"""
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise ValueError(f"プリセットファイルの形式が不正です: {path.name}")
+    return data
+
+
+def save_preset(path: Path, data: dict[str, object]) -> None:
+    """プリセットJSONをアトミックに保存する。"""
+    PRESET_DIR.mkdir(parents=True, exist_ok=True)
+    content = json.dumps(data, ensure_ascii=False, indent=2)
+    tmp_path = path.with_suffix(".tmp")
+    tmp_path.write_text(content, encoding="utf-8")
+    os.replace(str(tmp_path), str(path))
+
+
+def delete_preset(path: Path) -> None:
+    """プリセットファイルを削除する。"""
+    if path.is_file():
+        path.unlink()
+
+
+def send_vmm_automation(
+    port: int,
+    index: int,
+    load_character: bool = True,
+    load_non_character: bool = True,
+) -> None:
+    """VMagicMirror のオートメーション API に UDP で設定ファイル切替を送信する。"""
+    import socket
+
+    payload = json.dumps(
+        {
+            "command": "load_setting_file",
+            "args": {
+                "index": index,
+                "load_character": load_character,
+                "load_non_character": load_non_character,
+            },
+        },
+        ensure_ascii=False,
+    )
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+        sock.sendto(payload.encode("utf-8"), (VMM_AUTOMATION_HOST, port))
+
+
 def _migrate_legacy_log() -> None:
     """旧 avatar_log.jsonl をスロット1に移行する（初回のみ）。"""
     legacy = Path(__file__).with_name(LEGACY_LOG_FILE)
@@ -869,7 +935,7 @@ def open_settings_gui() -> None:
     )
 
     root = tk.Tk()
-    root.title("アバター設定")
+    root.title(f"アバター設定  v{APP_VERSION}")
     root.resizable(False, False)
 
     def _disable_scale_trough_jump(scale: ttk.Scale) -> None:
@@ -1037,11 +1103,13 @@ def open_settings_gui() -> None:
     char_frame = ttk.Frame(notebook, padding=12)
     expr_frame = ttk.Frame(notebook, padding=12)
     hook_frame = ttk.Frame(notebook, padding=12)
+    preset_frame = ttk.Frame(notebook, padding=12)
     claudemd_frame = ttk.Frame(notebook, padding=12)
     notebook.add(voice_frame, text="ボイス")
     notebook.add(char_frame, text="スタイル")
     notebook.add(expr_frame, text="リアクション")
     notebook.add(hook_frame, text="Hook連携")
+    notebook.add(preset_frame, text="プリセット")
     notebook.add(claudemd_frame, text="CLAUDE.md ジェネレーター")
 
     # ══════════════════════════════════════════════════════
@@ -1187,6 +1255,19 @@ def open_settings_gui() -> None:
         text="VOICEVOX → 本ツール → 仮想ケーブル → VMagicMirror（リップシンク）",
         foreground="gray",
     ).grid(row=1, column=0, columnspan=3, pady=(0, 4), sticky="w")
+    vb_warn_var = tk.StringVar(master=root, value="")
+    vb_warn_label = tk.Label(
+        lipsync_group, textvariable=vb_warn_var, fg="red",
+    )
+    vb_warn_label.grid(row=2, column=0, columnspan=3, sticky="w")
+    vb_warn_label.grid_remove()
+
+    def _on_vb_selected(*_args: object) -> None:
+        if variables["vbcable_device_name"].get().strip():
+            vb_warn_var.set("")
+            vb_warn_label.grid_remove()
+
+    vb_combobox.bind("<<ComboboxSelected>>", _on_vb_selected)
 
     # 再生デバイス グループ
     playback_group = ttk.LabelFrame(voice_frame, text="再生デバイス", padding=10)
@@ -2157,7 +2238,747 @@ def open_settings_gui() -> None:
     summary_preview.trace_add("write", _update_preview_text)
 
     # ══════════════════════════════════════════════════════
-    # Tab 5: CLAUDE.md ジェネレーター
+    # Tab 5: プリセット
+    # ══════════════════════════════════════════════════════
+
+    ttk.Label(
+        preset_frame,
+        text="ボイス・スタイル・リアクション・Hook連携の設定をまとめてプリセットとして保存・切替できます。\n"
+        "キャラクターごとに音声・口調・表情・Hook動作を一括管理するのに便利です。",
+        foreground="gray",
+        wraplength=520,
+        justify="left",
+    ).pack(fill="x", pady=(0, 8))
+
+    preset_status_var = tk.StringVar(master=root, value="")
+    _last_loaded_preset_name: list[str] = [
+        str(settings.get("last_loaded_preset", ""))
+    ]
+
+    def _refresh_preset_list() -> list[str]:
+        """プリセット一覧を再スキャンして Combobox を更新する。"""
+        files = list_preset_files()
+        names = [p.stem for p in files]
+        preset_combo.configure(values=names)
+        return names
+
+    def _collect_preset_data(name: str, description: str) -> dict[str, object]:
+        """現在の GUI 設定値からプリセット JSON データを構築する。"""
+        from datetime import datetime
+
+        try:
+            speaker_id = int(variables["voicevox_speaker_id"].get())
+        except ValueError:
+            speaker_id = VOICEVOX_SPEAKER_ID
+        try:
+            speed = round(float(variables["voice_speed_scale"].get()), 4)
+        except ValueError:
+            speed = VOICE_SPEED_SCALE
+        try:
+            pitch = round(float(variables["voice_pitch_scale"].get()), 4)
+        except ValueError:
+            pitch = VOICE_PITCH_SCALE
+        try:
+            intonation = round(float(variables["voice_intonation_scale"].get()), 4)
+        except ValueError:
+            intonation = VOICE_INTONATION_SCALE
+        try:
+            volume = round(float(variables["voice_volume_scale"].get()), 4)
+        except ValueError:
+            volume = VOICE_VOLUME_SCALE
+        try:
+            max_chars = int(variables["summary_max_chars"].get())
+            if max_chars < 1:
+                max_chars = SUMMARY_MAX_CHARS
+        except ValueError:
+            max_chars = SUMMARY_MAX_CHARS
+
+        now = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+        return {
+            "preset_version": PRESET_VERSION,
+            "name": name,
+            "description": description,
+            "created_at": now,
+            "updated_at": now,
+            "character": {
+                "summary_generation_enabled": summary_generation_enabled.get(),
+                "summary_system_prompt_path": variables[
+                    "summary_system_prompt_path"
+                ]
+                .get()
+                .strip()
+                or SUMMARY_SYSTEM_PROMPT_PATH,
+                "summary_max_chars": max_chars,
+            },
+            "voice": {
+                "voicevox_speaker_id": speaker_id,
+                "voice_speed_scale": speed,
+                "voice_pitch_scale": pitch,
+                "voice_intonation_scale": intonation,
+                "voice_volume_scale": volume,
+            },
+            "expression_voice_params": collect_expression_voice_params(),
+            "hotkey_mapping": collect_hotkey_mapping(),
+            "hook": {
+                "hook_hotkey_enabled": hook_hotkey_enabled.get(),
+                "hook_cooldown_ms": hook_cooldown_ms.get(),
+                "hook_expression_mapping": collect_hook_expression_mapping(),
+            },
+            "vmm_automation": {
+                "enabled": vmm_auto_enabled.get(),
+                "slot_index": _vmm_get_slot(),
+                "load_character": vmm_load_char.get(),
+                "load_non_character": vmm_load_nonchar.get(),
+            },
+        }
+
+    def _apply_preset(data: dict[str, object]) -> None:
+        """プリセットデータを GUI ウィジェットに反映する。"""
+        char = data.get("character", {})
+        if not isinstance(char, dict):
+            char = {}
+        voice = data.get("voice", {})
+        if not isinstance(voice, dict):
+            voice = {}
+        expr_params = data.get("expression_voice_params", {})
+        if not isinstance(expr_params, dict):
+            expr_params = {}
+
+        # スタイルタブ
+        summary_generation_enabled.set(
+            bool(char.get("summary_generation_enabled", SUMMARY_GENERATION_ENABLED))
+        )
+        variables["summary_system_prompt_path"].set(
+            str(char.get("summary_system_prompt_path", SUMMARY_SYSTEM_PROMPT_PATH))
+        )
+        variables["summary_max_chars"].set(
+            str(char.get("summary_max_chars", SUMMARY_MAX_CHARS))
+        )
+
+        # ボイスタブ
+        new_speaker_id = voice.get("voicevox_speaker_id", VOICEVOX_SPEAKER_ID)
+        variables["voicevox_speaker_id"].set(str(new_speaker_id))
+
+        voice_keys = [
+            ("voice_speed_scale", VOICE_SPEED_SCALE),
+            ("voice_pitch_scale", VOICE_PITCH_SCALE),
+            ("voice_intonation_scale", VOICE_INTONATION_SCALE),
+            ("voice_volume_scale", VOICE_VOLUME_SCALE),
+        ]
+        for key, default in voice_keys:
+            val = voice.get(key, default)
+            variables[key].set(str(val))
+            if key in global_voice_dvars:
+                try:
+                    global_voice_dvars[key].set(float(val))
+                except (ValueError, TypeError):
+                    pass
+
+        # リアクションタブ: 表情別声質オフセット
+        for eid_str, params in expr_params.items():
+            if eid_str in expr_voice_vars and isinstance(params, dict):
+                for param_key, val in params.items():
+                    if param_key in expr_voice_vars[eid_str]:
+                        expr_voice_vars[eid_str][param_key].set(str(val))
+
+        # リアクションタブ: ホットキー割当
+        preset_hotkeys = data.get("hotkey_mapping", {})
+        if isinstance(preset_hotkeys, dict):
+            for eid_str, hotkey_str in preset_hotkeys.items():
+                if eid_str in hotkey_vars:
+                    hotkey_vars[eid_str].set(str(hotkey_str))
+
+        update_expr_detail_panel()
+
+        # Hook連携タブ
+        hook = data.get("hook", {})
+        if isinstance(hook, dict):
+            hook_hotkey_enabled.set(
+                bool(hook.get("hook_hotkey_enabled", HOOK_HOTKEY_ENABLED))
+            )
+            try:
+                new_cooldown = int(hook.get("hook_cooldown_ms", HOOK_COOLDOWN_MS))
+            except (TypeError, ValueError):
+                new_cooldown = HOOK_COOLDOWN_MS
+            hook_cooldown_ms.set(new_cooldown)
+            cooldown_label.configure(text=f"{new_cooldown} ms")
+            hook_mapping = hook.get("hook_expression_mapping", {})
+            if isinstance(hook_mapping, dict):
+                for event_name, eid in hook_mapping.items():
+                    if event_name in hook_expr_vars:
+                        try:
+                            eid = int(eid)
+                        except (TypeError, ValueError):
+                            eid = 0
+                        if 1 <= eid <= 10:
+                            label = EXPRESSION_ID_LABELS[eid].split(" / ")[0]
+                            hook_expr_vars[event_name].set(f"{eid}: {label}")
+                        else:
+                            hook_expr_vars[event_name].set("0: 送信しない")
+
+        # VMagicMirror 連携
+        vmm = data.get("vmm_automation", {})
+        if isinstance(vmm, dict):
+            vmm_auto_enabled.set(bool(vmm.get("enabled", False)))
+            slot_idx = 0
+            try:
+                slot_idx = int(vmm.get("slot_index", 0))
+            except (TypeError, ValueError):
+                pass
+            if 1 <= slot_idx <= VMM_SLOT_MAX:
+                vmm_slot_var.set(str(slot_idx))
+            else:
+                vmm_slot_var.set("0: 送信しない")
+            vmm_load_char.set(bool(vmm.get("load_character", True)))
+            vmm_load_nonchar.set(bool(vmm.get("load_non_character", True)))
+
+    def _on_save_preset() -> None:
+        """プリセット保存ダイアログを表示する。"""
+        save_win = tk.Toplevel(root)
+        save_win.title("プリセットを保存")
+        save_win.geometry("400x180")
+        save_win.transient(root)
+        save_win.grab_set()
+
+        ttk.Label(save_win, text="プリセット名").pack(
+            anchor="w", padx=12, pady=(12, 2)
+        )
+        name_var = tk.StringVar(
+            master=save_win, value=preset_combo.get().strip()
+        )
+        ttk.Entry(save_win, textvariable=name_var, width=40).pack(
+            fill="x", padx=12, pady=(0, 4)
+        )
+
+        ttk.Label(save_win, text="説明（省略可）").pack(
+            anchor="w", padx=12, pady=(4, 2)
+        )
+        _existing_desc = ""
+        _current_name = preset_combo.get().strip()
+        if _current_name:
+            _existing_path = PRESET_DIR / f"{_current_name}.json"
+            if _existing_path.is_file():
+                try:
+                    _existing_data = load_preset(_existing_path)
+                    _existing_desc = str(_existing_data.get("description", ""))
+                except (json.JSONDecodeError, ValueError, OSError):
+                    pass
+        desc_var = tk.StringVar(master=save_win, value=_existing_desc)
+        ttk.Entry(save_win, textvariable=desc_var, width=40).pack(
+            fill="x", padx=12, pady=(0, 8)
+        )
+
+        _WIN_RESERVED_NAMES = frozenset({
+            "CON", "PRN", "AUX", "NUL",
+            *(f"COM{i}" for i in range(1, 10)),
+            *(f"LPT{i}" for i in range(1, 10)),
+        })
+
+        def _sanitize_preset_name(raw: str) -> str | None:
+            """ファイル名として安全な文字列に変換する。無効なら None。"""
+            s = re.sub(r'[\\/:*?"<>|]', "_", raw)
+            s = s.strip(". ")
+            if not s:
+                return None
+            if s.upper() in _WIN_RESERVED_NAMES:
+                return None
+            if len(s) > 200:
+                s = s[:200].rstrip(". ")
+            return s or None
+
+        def _do_save() -> None:
+            name = name_var.get().strip()
+            if not name:
+                messagebox.showwarning(
+                    "入力エラー", "プリセット名を入力してください。", parent=save_win
+                )
+                return
+
+            safe_name = _sanitize_preset_name(name)
+            if safe_name is None:
+                messagebox.showwarning(
+                    "入力エラー",
+                    "プリセット名に使用できない文字のみが含まれています。\n"
+                    "別の名前を入力してください。",
+                    parent=save_win,
+                )
+                return
+
+            if safe_name != name:
+                if not messagebox.askyesno(
+                    "名前の変換",
+                    f"ファイル名に使用できない文字が含まれていたため、\n"
+                    f"「{safe_name}」に変換されます。よろしいですか？",
+                    parent=save_win,
+                ):
+                    return
+
+            path = PRESET_DIR / f"{safe_name}.json"
+
+            if path.is_file():
+                if not messagebox.askyesno(
+                    "上書き確認",
+                    f"プリセット「{safe_name}」は既に存在します。上書きしますか？",
+                    parent=save_win,
+                ):
+                    return
+                try:
+                    existing = load_preset(path)
+                    created_at = existing.get("created_at", "")
+                except (json.JSONDecodeError, ValueError, OSError):
+                    created_at = ""
+            else:
+                created_at = ""
+
+            data = _collect_preset_data(safe_name, desc_var.get().strip())
+            if created_at:
+                data["created_at"] = created_at
+
+            try:
+                save_preset(path, data)
+            except OSError as err:
+                messagebox.showerror("保存失敗", str(err), parent=save_win)
+                return
+
+            names = _refresh_preset_list()
+            if safe_name in names:
+                preset_combo.set(safe_name)
+                _on_preset_selected()
+            _last_loaded_preset_name[0] = safe_name
+            preset_status_var.set(f"プリセット「{safe_name}」を保存しました")
+            save_win.destroy()
+
+        btn_frame = ttk.Frame(save_win)
+        btn_frame.pack(fill="x", padx=12, pady=(0, 12))
+        ttk.Button(btn_frame, text="保存", command=_do_save).pack(side="left")
+        ttk.Button(btn_frame, text="キャンセル", command=save_win.destroy).pack(
+            side="left", padx=(8, 0)
+        )
+
+    def _on_load_preset() -> None:
+        """選択中のプリセットを読み込む。"""
+        selected = preset_combo.get().strip()
+        if not selected:
+            preset_status_var.set("プリセットを選択してください")
+            return
+
+        path = PRESET_DIR / f"{selected}.json"
+        if not path.is_file():
+            preset_status_var.set(f"プリセットファイルが見つかりません: {selected}")
+            return
+
+        if _has_unsaved_changes():
+            if not messagebox.askyesno(
+                "未保存の変更",
+                "現在の設定に未保存の変更があります。プリセットを読み込みますか？\n"
+                "（現在の変更は失われます）",
+                parent=root,
+            ):
+                return
+
+        try:
+            data = load_preset(path)
+        except (json.JSONDecodeError, ValueError, OSError) as err:
+            messagebox.showerror(
+                "読込エラー", f"プリセットの読込に失敗しました: {err}", parent=root
+            )
+            return
+
+        prompt_path = data.get("character", {}).get("summary_system_prompt_path", "")
+        if prompt_path and not Path(prompt_path).is_file():
+            messagebox.showwarning(
+                "ファイル不在",
+                f"キャラプロンプトファイルが見つかりません:\n{prompt_path}\n\n"
+                "パスは設定されますが、ファイルを確認してください。",
+                parent=root,
+            )
+
+        _apply_preset(data)
+
+        # VMagicMirror オートメーション送信
+        vmm = data.get("vmm_automation", {})
+        if (
+            isinstance(vmm, dict)
+            and vmm.get("enabled", False)
+        ):
+            try:
+                slot_idx = int(vmm.get("slot_index", 0))
+            except (TypeError, ValueError):
+                slot_idx = 0
+            if 1 <= slot_idx <= VMM_SLOT_MAX:
+                port = _vmm_get_port()
+                try:
+                    send_vmm_automation(
+                        port,
+                        slot_idx,
+                        bool(vmm.get("load_character", True)),
+                        bool(vmm.get("load_non_character", True)),
+                    )
+                    vmm_status_var.set(
+                        f"VMM スロット {slot_idx} に切替しました"
+                    )
+                except OSError as err:
+                    vmm_status_var.set(f"VMM 送信失敗: {err}")
+
+        _last_loaded_preset_name[0] = selected
+        preset_status_var.set(
+            f"プリセット「{data.get('name', selected)}」を読み込みました"
+        )
+
+    def _on_delete_preset() -> None:
+        """選択中のプリセットを削除する。"""
+        selected = preset_combo.get().strip()
+        if not selected:
+            preset_status_var.set("プリセットを選択してください")
+            return
+
+        path = PRESET_DIR / f"{selected}.json"
+        if not path.is_file():
+            preset_status_var.set(f"プリセットファイルが見つかりません: {selected}")
+            return
+
+        if not messagebox.askyesno(
+            "削除確認",
+            f"プリセット「{selected}」を削除しますか？\nこの操作は取り消せません。",
+            parent=root,
+        ):
+            return
+
+        try:
+            delete_preset(path)
+        except OSError as err:
+            messagebox.showerror(
+                "削除エラー", f"プリセットの削除に失敗しました: {err}", parent=root
+            )
+            return
+
+        is_current = selected == _last_loaded_preset_name[0]
+        preset_combo.set("")
+        preset_detail_var.set("")
+        if is_current:
+            _last_loaded_preset_name[0] = ""
+            _reset_vmm_widgets()
+        _refresh_preset_list()
+        preset_status_var.set(f"プリセット「{selected}」を削除しました")
+
+    # プリセット操作 UI
+    preset_manage_group = ttk.LabelFrame(
+        preset_frame, text="保存済みプリセット", padding=10
+    )
+    preset_manage_group.pack(fill="x", pady=(0, 8))
+    preset_manage_group.columnconfigure(0, weight=1)
+
+    preset_row = ttk.Frame(preset_manage_group)
+    preset_row.pack(fill="x")
+    preset_row.columnconfigure(0, weight=1)
+
+    preset_combo = ttk.Combobox(preset_row, state="readonly", width=24)
+    preset_combo.grid(row=0, column=0, sticky="ew", padx=(0, 6))
+
+    ttk.Button(preset_row, text="読込", command=_on_load_preset).grid(
+        row=0, column=1, padx=(0, 4)
+    )
+    ttk.Button(preset_row, text="保存", command=_on_save_preset).grid(
+        row=0, column=2, padx=(0, 4)
+    )
+    ttk.Button(preset_row, text="削除", command=_on_delete_preset).grid(
+        row=0, column=3
+    )
+
+    ttk.Label(
+        preset_manage_group, textvariable=preset_status_var, foreground="gray"
+    ).pack(fill="x", pady=(4, 0))
+
+    # プリセット詳細表示
+    preset_detail_var = tk.StringVar(master=root, value="")
+    ttk.Label(
+        preset_manage_group,
+        textvariable=preset_detail_var,
+        foreground="#555555",
+        wraplength=480,
+        justify="left",
+    ).pack(fill="x", pady=(2, 0))
+
+    def _on_preset_selected(*_args: object) -> None:
+        """Combobox の選択変更時にプリセットの詳細を表示する。"""
+        selected = preset_combo.get().strip()
+        if not selected:
+            preset_detail_var.set("")
+            return
+        path = PRESET_DIR / f"{selected}.json"
+        if not path.is_file():
+            preset_detail_var.set("")
+            return
+        try:
+            data = load_preset(path)
+        except (json.JSONDecodeError, ValueError, OSError):
+            preset_detail_var.set("")
+            return
+        parts: list[str] = []
+        desc = data.get("description", "")
+        if desc:
+            parts.append(desc)
+        voice = data.get("voice", {})
+        if isinstance(voice, dict):
+            sid = voice.get("voicevox_speaker_id", "?")
+            label = speaker_ids_to_labels.get(sid, "")
+            if label:
+                parts.append(f"ボイス: {label}")
+            else:
+                parts.append(f"ボイス: Speaker ID {sid}")
+        char = data.get("character", {})
+        if isinstance(char, dict):
+            prompt = char.get("summary_system_prompt_path", "")
+            if prompt:
+                parts.append(f"スタイル: {Path(prompt).stem}")
+        created = data.get("created_at", "")
+        if created:
+            parts.append(f"作成: {created[:10]}")
+        vmm = data.get("vmm_automation", {})
+        if isinstance(vmm, dict) and vmm.get("enabled", False):
+            try:
+                slot = int(vmm.get("slot_index", 0))
+            except (TypeError, ValueError):
+                slot = 0
+            if slot >= 1:
+                parts.append(f"VMM: スロット{slot}")
+        preset_detail_var.set(" ｜ ".join(parts) if parts else "")
+
+    preset_combo.bind("<<ComboboxSelected>>", _on_preset_selected)
+
+    _refresh_preset_list()
+
+    # ── 高度な設定（実験機能） ──
+    advanced_header = ttk.Frame(preset_frame)
+    advanced_header.pack(fill="x", pady=(12, 8))
+    _advanced_expanded = tk.BooleanVar(master=root, value=False)
+    _advanced_toggle_btn = ttk.Checkbutton(
+        advanced_header,
+        text="▶ 高度な設定（実験機能）",
+        variable=_advanced_expanded,
+        style="Toolbutton",
+    )
+    _advanced_toggle_btn.pack(anchor="w")
+    _advanced_hint = ttk.Label(
+        advanced_header,
+        text="↑ クリックで展開できます",
+        foreground="gray",
+    )
+    _advanced_hint.pack(anchor="w", padx=(20, 0))
+
+    advanced_body = ttk.Frame(preset_frame)
+
+    def _toggle_advanced(*_args: object) -> None:
+        if _advanced_expanded.get():
+            _advanced_toggle_btn.configure(text="▼ 高度な設定（実験機能）")
+            _advanced_hint.pack_forget()
+            advanced_body.pack(fill="x", pady=(0, 8), after=advanced_header)
+        else:
+            _advanced_toggle_btn.configure(text="▶ 高度な設定（実験機能）")
+            advanced_body.pack_forget()
+            _advanced_hint.pack(anchor="w", padx=(20, 0))
+
+    _advanced_expanded.trace_add("write", _toggle_advanced)
+    _toggle_advanced()  # 初期状態（閉じた状態）
+
+    # VMagicMirror 連携
+    vmm_group = ttk.LabelFrame(
+        advanced_body, text="VMagicMirror 連携", padding=10
+    )
+    vmm_group.pack(fill="x", pady=(0, 8))
+    vmm_group.columnconfigure(1, weight=1)
+
+    vmm_auto_enabled = tk.BooleanVar(master=root, value=False)
+    vmm_enable_row = ttk.Frame(vmm_group)
+    vmm_enable_row.grid(row=0, column=0, columnspan=3, pady=(0, 2), sticky="w")
+    ttk.Checkbutton(
+        vmm_enable_row,
+        text="プリセット読込時に VMagicMirror のセーブデータも切替える",
+        variable=vmm_auto_enabled,
+    ).pack(side="left")
+
+    def _show_vmm_help() -> None:
+        manual_path = Path(__file__).with_name("MANUAL.md")
+        try:
+            content = manual_path.read_text(encoding="utf-8")
+        except OSError:
+            messagebox.showerror(
+                "エラー", f"MANUAL.md が見つかりません:\n{manual_path}"
+            )
+            return
+        # "**VMagicMirror 連携（実験機能）:**" から次の "###" まで抽出
+        marker = "**VMagicMirror 連携（実験機能）:**"
+        start = content.find(marker)
+        if start == -1:
+            messagebox.showinfo("ヘルプ", "該当セクションが見つかりません")
+            return
+        end = content.find("\n###", start + len(marker))
+        if end == -1:
+            section = content[start:]
+        else:
+            section = content[start:end]
+        hw = tk.Toplevel(root)
+        hw.title("VMagicMirror 連携 ヘルプ")
+        hw.geometry("620x460")
+        hw.transient(root)
+        hw.grab_set()
+        _render_md(hw, section.strip())
+
+    ttk.Button(
+        vmm_enable_row, text="？", width=3, command=_show_vmm_help
+    ).pack(side="left", padx=(6, 0))
+    # 詳細設定エリア（チェック ON/OFF で表示切替）
+    vmm_detail_frame = ttk.Frame(vmm_group)
+
+    ttk.Label(
+        vmm_detail_frame,
+        text="※ この設定はプリセットに含まれます。変更後はプリセットを保存してください。",
+        foreground="gray",
+        wraplength=520,
+        justify="left",
+    ).grid(row=0, column=0, columnspan=3, pady=(0, 6), sticky="w")
+
+    ttk.Label(vmm_detail_frame, text="ポート番号").grid(
+        row=1, column=0, padx=(0, 8), pady=3, sticky="w"
+    )
+    vmm_port_var = tk.StringVar(
+        master=root,
+        value=str(settings.get("vmm_automation_port", VMM_AUTOMATION_PORT)),
+    )
+    ttk.Entry(vmm_detail_frame, textvariable=vmm_port_var, width=8).grid(
+        row=1, column=1, pady=3, sticky="w"
+    )
+
+    ttk.Label(vmm_detail_frame, text="スロット").grid(
+        row=2, column=0, padx=(0, 8), pady=3, sticky="w"
+    )
+    vmm_slot_choices = ["0: 送信しない"] + [str(i) for i in range(1, VMM_SLOT_MAX + 1)]
+    vmm_slot_var = tk.StringVar(master=root, value="0: 送信しない")
+    vmm_slot_combo = ttk.Combobox(
+        vmm_detail_frame,
+        textvariable=vmm_slot_var,
+        values=vmm_slot_choices,
+        state="readonly",
+        width=14,
+    )
+    vmm_slot_combo.grid(row=2, column=1, pady=3, sticky="w")
+
+    vmm_load_char = tk.BooleanVar(master=root, value=True)
+    vmm_load_nonchar = tk.BooleanVar(master=root, value=True)
+    vmm_check_row = ttk.Frame(vmm_detail_frame)
+    vmm_check_row.grid(row=3, column=0, columnspan=3, pady=(2, 0), sticky="w")
+    ttk.Checkbutton(
+        vmm_check_row, text="アバターをロード", variable=vmm_load_char
+    ).pack(side="left", padx=(0, 12))
+    ttk.Checkbutton(
+        vmm_check_row, text="アバター以外をロード", variable=vmm_load_nonchar
+    ).pack(side="left")
+
+    vmm_status_var = tk.StringVar(master=root, value="")
+
+    def _toggle_vmm_detail(*_args: object) -> None:
+        if vmm_auto_enabled.get():
+            vmm_detail_frame.grid(row=1, column=0, columnspan=3, sticky="ew")
+        else:
+            vmm_detail_frame.grid_remove()
+
+    vmm_auto_enabled.trace_add("write", _toggle_vmm_detail)
+    _toggle_vmm_detail()  # 初期状態を反映
+
+    def _vmm_get_port() -> int:
+        try:
+            return int(vmm_port_var.get().strip())
+        except ValueError:
+            return VMM_AUTOMATION_PORT
+
+    def _vmm_get_slot() -> int:
+        raw = vmm_slot_var.get().strip()
+        try:
+            return int(raw.split(":")[0].strip())
+        except (ValueError, IndexError):
+            return 0
+
+    def _vmm_test_send() -> None:
+        slot = _vmm_get_slot()
+        if slot < 1:
+            vmm_status_var.set("スロットを 1〜15 から選択してください")
+            return
+        port = _vmm_get_port()
+        try:
+            send_vmm_automation(
+                port, slot, vmm_load_char.get(), vmm_load_nonchar.get()
+            )
+            vmm_status_var.set(
+                f"スロット {slot} を送信しました (port {port})"
+            )
+        except OSError as err:
+            vmm_status_var.set(f"送信失敗: {err}")
+
+    vmm_btn_row = ttk.Frame(vmm_detail_frame)
+    vmm_btn_row.grid(row=4, column=0, columnspan=3, pady=(6, 0), sticky="w")
+    ttk.Button(vmm_btn_row, text="テスト送信", command=_vmm_test_send).pack(
+        side="left"
+    )
+    ttk.Label(vmm_btn_row, textvariable=vmm_status_var, foreground="gray").pack(
+        side="left", padx=(8, 0)
+    )
+
+    # プリセットに含まれる設定の説明
+    info_group = ttk.LabelFrame(preset_frame, text="プリセットに含まれる設定", padding=10)
+    info_group.pack(fill="x", pady=(0, 8))
+
+    for info_text in [
+        "ボイス: VOICEVOX スピーカーID・速度・ピッチ・抑揚・音量",
+        "スタイル: キャラプロンプト有効/無効・ファイルパス・要約最大文字数",
+        "リアクション: ホットキー割当・表情別の声質オフセット（速度・ピッチ・抑揚・音量 × 10表情）",
+        "Hook連携: 有効/無効・デバウンス間隔・イベント→表情マッピング",
+        "VMagicMirror: オートメーション有効/無効・スロット番号・ロードオプション（有効時）",
+    ]:
+        ttk.Label(info_group, text=f"・{info_text}", foreground="#555555").pack(
+            anchor="w", pady=1
+        )
+
+    # 起動時: 前回読み込んだプリセットを復元（VMM ウィジェット作成後に実行）
+    names = _refresh_preset_list()
+    if _last_loaded_preset_name[0] and _last_loaded_preset_name[0] in names:
+        preset_combo.set(_last_loaded_preset_name[0])
+        _on_preset_selected()
+        # VMM 連携設定をプリセット JSON から復元
+        _restore_path = PRESET_DIR / f"{_last_loaded_preset_name[0]}.json"
+        if _restore_path.is_file():
+            try:
+                _restore_data = load_preset(_restore_path)
+                _vmm_data = _restore_data.get("vmm_automation", {})
+                if isinstance(_vmm_data, dict):
+                    vmm_auto_enabled.set(bool(_vmm_data.get("enabled", False)))
+                    _slot = 0
+                    try:
+                        _slot = int(_vmm_data.get("slot_index", 0))
+                    except (TypeError, ValueError):
+                        pass
+                    if 1 <= _slot <= VMM_SLOT_MAX:
+                        vmm_slot_var.set(str(_slot))
+                    else:
+                        vmm_slot_var.set("0: 送信しない")
+                    vmm_load_char.set(bool(_vmm_data.get("load_character", True)))
+                    vmm_load_nonchar.set(
+                        bool(_vmm_data.get("load_non_character", True))
+                    )
+                    if _vmm_data.get("enabled", False):
+                        _advanced_expanded.set(True)
+            except (json.JSONDecodeError, ValueError, OSError):
+                pass
+
+    def _reset_vmm_widgets() -> None:
+        """VMM 連携ウィジェットをデフォルト値にリセットする。"""
+        vmm_auto_enabled.set(False)
+        vmm_slot_var.set("0: 送信しない")
+        vmm_load_char.set(True)
+        vmm_load_nonchar.set(True)
+        vmm_status_var.set("")
+
+    # ══════════════════════════════════════════════════════
+    # Tab 6: CLAUDE.md ジェネレーター
     # ══════════════════════════════════════════════════════
 
     ttk.Label(
@@ -3144,6 +3965,9 @@ def open_settings_gui() -> None:
             speaker_status.set(f"VOICEVOX speaker一覧を {len(labels)} 件読み込みました")
             voicevox_warn_var.set("")
             voicevox_warn_label.pack_forget()
+            # スピーカー名が揃ったのでプリセット詳細を再表示
+            if preset_combo.get().strip():
+                _on_preset_selected()
 
         threading.Thread(target=_fetch, daemon=True).start()
 
@@ -3231,9 +4055,24 @@ def open_settings_gui() -> None:
         vb_combobox.configure(values=v_opts if v_opts else options)
         monitor_combobox.configure(values=p_opts if p_opts else options)
 
-        variables["vbcable_device_name"].set(
-            normalize_device_selection(variables["vbcable_device_name"].get())
-        )
+        cur_vb_raw = variables["vbcable_device_name"].get().strip()
+        if not cur_vb_raw and len(v_opts) == 1:
+            # 初回起動時: 仮想ケーブルが1つだけなら自動選択
+            variables["vbcable_device_name"].set(v_opts[0])
+        else:
+            variables["vbcable_device_name"].set(
+                normalize_device_selection(cur_vb_raw)
+            )
+        # 仮想ケーブル未選択時の警告
+        if not variables["vbcable_device_name"].get().strip():
+            if len(v_opts) == 0:
+                vb_warn_var.set("※ 仮想ケーブル（VB-Cable 等）が見つかりません。インストールしてください。")
+            else:
+                vb_warn_var.set("※ 仮想ケーブルが複数あります。使用するデバイスを選択して保存してください。")
+            vb_warn_label.grid()
+        else:
+            vb_warn_var.set("")
+            vb_warn_label.grid_remove()
         monitor_value = normalize_device_selection(
             variables["monitor_device_name"].get(),
             allow_default=True,
@@ -3363,6 +4202,8 @@ def open_settings_gui() -> None:
             "hook_hotkey_enabled": hook_hotkey_enabled.get(),
             "hook_cooldown_ms": hook_cooldown_ms.get(),
             "hook_expression_mapping": collect_hook_expression_mapping(),
+            "vmm_automation_port": _vmm_get_port(),
+            "last_loaded_preset": _last_loaded_preset_name[0],
         }
 
     def _take_snapshot() -> None:

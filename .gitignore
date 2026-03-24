@@ -17,6 +17,7 @@ src/*.lock
 
 # ユーザー作成ファイル
 src/AIPersonas/
+src/CharacterPresets/
 
 # Claude Code ローカル設定（CVE-2025-59536 対策）
 .claude/
