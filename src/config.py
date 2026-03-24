@@ -69,7 +69,7 @@ threading.Thread(target=_background_import, daemon=True).start()
 
 IS_WINDOWS = platform.system() == "Windows"
 
-APP_VERSION = "0.1.1"
+APP_VERSION = "0.1.11"
 
 AVATAR_ENABLED = True
 VOICEVOX_SPEAKER_ID = 1

@@ -30,9 +30,10 @@ echo "[OK] $PYTHON_VERSION"
 # 仮想環境の作成
 if [ ! -d ".venv" ]; then
     echo ""
-    echo "--- 仮想環境を作成しています ---"
-    $PYTHON_CMD -m venv .venv
-    echo "[OK] .venv を作成しました"
+    if ! $PYTHON_CMD src/_create_venv.py; then
+        echo "[ERROR] 仮想環境の作成に失敗しました"
+        exit 1
+    fi
 else
     echo "[OK] .venv は既に存在します"
 fi
@@ -47,28 +48,37 @@ else
     exit 1
 fi
 
-# 依存パッケージのインストール
+# 依存パッケージのインストール（失敗しても動作確認へ進む）
+VERIFY_FAILED=0
 echo ""
-echo "--- 依存パッケージをインストールしています ---"
-pip install -r requirements.txt --quiet --disable-pip-version-check
-echo "[OK] 依存パッケージをインストールしました"
+python src/_pip_install.py || VERIFY_FAILED=1
 
 # 動作確認
 echo ""
 echo "--- 動作確認 ---"
-python -c "import sys; sys.path.insert(0,'src'); import config; print('[OK] config.py を読み込めました')"
-python -c "import sys; sys.path.insert(0,'src'); import send_to_avatar; print('[OK] send_to_avatar.py を読み込めました')"
+if ! python -c "import sys; sys.path.insert(0,'src'); import config; print('[OK] config.py を読み込めました')"; then
+    echo "[WARN] config.py の読み込みに失敗しました"
+    VERIFY_FAILED=1
+fi
+if ! python -c "import sys; sys.path.insert(0,'src'); import send_to_avatar; print('[OK] send_to_avatar.py を読み込めました')"; then
+    echo "[WARN] send_to_avatar.py の読み込みに失敗しました"
+    VERIFY_FAILED=1
+fi
 
 echo ""
-echo "=== セットアップ完了 ==="
+if [ $VERIFY_FAILED -eq 1 ]; then
+    echo "=== セットアップは完了しましたが、動作確認で問題が見つかりました ==="
+else
+    echo "=== セットアップ完了 ==="
+fi
 echo ""
 echo "次のステップ:"
 echo "  1. VOICEVOX を起動してください"
 echo "  2. 設定画面を開いてください:"
 if [ -f ".venv/Scripts/activate" ]; then
-    echo "     source .venv/Scripts/activate && python src/config.py"
+    echo "     source .venv/Scripts/activate && python src/_launch_config.py"
 else
-    echo "     source .venv/bin/activate && python src/config.py"
+    echo "     source .venv/bin/activate && python src/_launch_config.py"
 fi
 echo "  3. 画面の案内に沿って初期設定を進めてください"
 echo ""
