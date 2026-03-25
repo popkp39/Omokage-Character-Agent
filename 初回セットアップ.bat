@@ -16,7 +16,11 @@ python -c "import sys; exit(0 if sys.version_info >= (3, 10) else 1)" >nul 2>&1
 if errorlevel 1 goto :old_python
 
 REM Create virtual environment
-if exist ".venv" goto :venv_exists
+if exist ".venv\Scripts\activate.bat" goto :venv_exists
+if exist ".venv" (
+    echo [WARN] .venv is incomplete, recreating...
+    rmdir /s /q ".venv"
+)
 echo.
 python src\_create_venv.py
 if errorlevel 1 goto :venv_create_failed
@@ -27,7 +31,6 @@ echo [OK] .venv already exists
 
 :activate_venv
 REM Activate virtual environment
-if not exist ".venv\Scripts\activate.bat" goto :no_venv
 call .venv\Scripts\activate.bat
 
 REM Install dependencies
