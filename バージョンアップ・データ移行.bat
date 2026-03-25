@@ -2,7 +2,7 @@
 chcp 65001 >nul 2>&1
 cd /d "%~dp0"
 
-REM .venv があればそれを使う（既存フラグを記録）
+REM Use .venv if available
 set VENV_EXISTED=0
 if exist ".venv\Scripts\python.exe" (
     set VENV_EXISTED=1
@@ -10,7 +10,7 @@ if exist ".venv\Scripts\python.exe" (
     goto :run_migration
 )
 
-REM .venv がない場合はシステム Python で実行（.venv は移行でコピーされる）
+REM Fall back to system Python
 where python >nul 2>&1
 if errorlevel 1 goto :no_python
 
@@ -20,12 +20,22 @@ if errorlevel 1 goto :old_python
 set PYTHON=python
 
 :run_migration
-%PYTHON% -c "print('============================================'); print('  Omokage-Character-Agent'); print('  バージョンアップ・データ移行ツール'); print('============================================'); print(); print('  旧バージョンからデータ（設定・プリセット・キャラ設定・ログ・.venv）を'); print('  このフォルダへ移行します。'); print(); print('  フォルダ選択ダイアログが開きます。'); print('  旧バージョンの OmokageCharacterAgent フォルダを選択してください。'); print()"
+echo ============================================
+echo   Omokage-Character-Agent
+echo   Migration Tool
+echo ============================================
+echo.
+echo   Migrate data (settings, presets, characters, logs, .venv)
+echo   from an older version to this folder.
+echo.
+echo   A folder selection dialog will open.
+echo   Select the old OmokageCharacterAgent folder.
+echo.
 
 %PYTHON% src\_migrate_data.py
 if errorlevel 1 goto :migration_failed
 
-REM .venv がコピーされた場合のみ、差分 pip install を実行
+REM Run pip install if .venv was copied during migration
 if "%VENV_EXISTED%"=="0" if exist ".venv\Scripts\python.exe" (
     echo.
     echo --- pip install ---
@@ -37,31 +47,47 @@ if "%VENV_EXISTED%"=="0" if exist ".venv\Scripts\python.exe" (
     python -c "import sys; sys.path.insert(0,'src'); import send_to_avatar; print('[OK] send_to_avatar.py')"
 )
 
-%PYTHON% -c "print(); print('============================================'); print(); print('  バージョンアップ・データ移行が完了しました!'); print(); print('  次のステップ:'); print('    - 「設定画面を開く.bat」でパスの確認'); print('    - 動作テスト'); print(); print('============================================'); print()"
-
-echo 何かキーを押すと閉じます。
+echo.
+echo ============================================
+echo.
+echo   Migration complete!
+echo.
+echo   Next steps:
+echo     - Open "Settings" to verify paths
+echo     - Test that everything works
+echo.
+echo ============================================
+echo.
+echo Press any key to close.
 pause >nul
 exit /b 0
 
 :migration_failed
-%PYTHON% -c "print(); print('============================================'); print(); print('  移行は完了していません。'); print('  上のメッセージを確認してください。'); print(); print('============================================'); print()"
-echo 何かキーを押すと閉じます。
+echo.
+echo ============================================
+echo.
+echo   Migration did not complete.
+echo   Check the messages above.
+echo.
+echo ============================================
+echo.
+echo Press any key to close.
 pause >nul
 exit /b 1
 
 :no_python
 echo.
-echo  [エラー] Python が見つかりません。
-echo  Python 3.10 以上をインストールするか、初回セットアップを先に実行してください。
+echo  [ERROR] Python not found.
+echo  Please install Python 3.10+ or run Setup first.
 echo.
-echo 何かキーを押すと閉じます。
+echo Press any key to close.
 pause >nul
 exit /b 1
 
 :old_python
 echo.
-echo  [エラー] Python 3.10 以上が必要です。
+echo  [ERROR] Python 3.10 or later is required.
 echo.
-echo 何かキーを押すと閉じます。
+echo Press any key to close.
 pause >nul
 exit /b 1

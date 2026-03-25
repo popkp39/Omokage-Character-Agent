@@ -8,6 +8,12 @@ start "" .venv\Scripts\pythonw.exe src\_launch_config.py
 exit /b 0
 
 :no_setup
-python -c "print(); print('  セットアップが完了していません。'); print(); print('  新規の場合は「初回セットアップ.bat」を、'); print('  旧バージョンからの移行の場合は「バージョンアップ・データ移行.bat」を'); print('  先に実行してから、もう一度お試しください。'); print(); print('  何かキーを押すと閉じます。')"
+echo.
+echo   Setup is not complete.
+echo.
+echo   Please run "Setup.bat" first,
+echo   or "Migration.bat" if upgrading from an older version.
+echo.
+echo   Press any key to close.
 pause >nul
 exit /b 1
